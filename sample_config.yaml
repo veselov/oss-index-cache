@@ -1,0 +1,25 @@
+configuration:
+
+  server:
+    listenAddr: :8080 #default
+    requestTimeout: 30s # end-to-end request timeout
+    
+  auth:
+    gitlabBaseUrl: https://gitlab.com
+    authCacheTtl: 10m # Duration to cache successful PAT verifications.
+    
+  sonatype:
+    upstream: https://ossindex.sonatype.org/api/v3/component-report # shouldn't need changing
+    username: <Your SonaType Username>
+    apiKey: <Your SonaType API key>
+    timeout: 20s
+
+  cache:
+    directory: test
+    reportTtl: 8h # time until report becomes expired, since its last retrieval
+    refreshThreshold: 0.05 # When report is re-requested from upstream in percentage of its TTL
+    unusedTtl: 120h # how long since a report is last accessed before it's evicted from the cache entirely
+    
+  logs:
+    # journal: # if configured, specifies the journal name for journalctl, if not configured, process name is used.
+
