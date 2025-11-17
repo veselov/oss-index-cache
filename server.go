@@ -91,7 +91,7 @@ func (s *server) handleComponentReport(w http.ResponseWriter, r *http.Request) {
 		if entry, ok, err := s.cache.Read(c); err == nil && ok {
 			if !s.cache.IsExpired(entry, now) {
 				cacheHits[c] = entry.Payload
-				_ = s.cache.Touch(c, now)
+				_ = s.cache.MarkUsed(c, now)
 			} else {
 				missing = append(missing, c)
 			}
@@ -123,7 +123,7 @@ func (s *server) handleComponentReport(w http.ResponseWriter, r *http.Request) {
 	}
 	// Persist upstream results
 	for coord, payload := range upstreamResults {
-		entry := &CacheEntry{Version: 1, Coordinate: coord, RetrievedAt: now, LastAccessedAt: now, Payload: payload}
+		entry := &CacheEntry{Version: 1, Coordinate: coord, RetrievedAt: now, LastAccessedAt: now, LastUsed: now, Payload: payload}
 		if err := s.cache.Write(entry); err != nil {
 			s.logger.Printf("cache write error coord=%s err=%v", coord, err)
 		}
