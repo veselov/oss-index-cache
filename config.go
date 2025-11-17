@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -24,18 +25,20 @@ type Config struct {
 			Upstream string        `yaml:"upstream"`
 			Username string        `yaml:"username"`
 			APIKey   string        `yaml:"apiKey"`
-			Timeout time.Duration  `yaml:"timeout"`
+			Timeout  time.Duration `yaml:"timeout"`
 		} `yaml:"sonatype"`
 		Cache struct {
-			Directory        string        `yaml:"directory"`
-			ReportTTL        time.Duration `yaml:"reportTtl"`
-			RefreshThreshold float64       `yaml:"refreshThreshold"`
-			UnusedTTL        time.Duration `yaml:"unusedTtl"`
+			Directory  string        `yaml:"directory"`
+			ExpireTTL  time.Duration `yaml:"expireTtl"`
+			RefreshTTL time.Duration `yaml:"refreshTtl"`
+			UnusedTTL  time.Duration `yaml:"unusedTtl"`
+			BatchSize  int           `yaml:"batchSize"`
 		} `yaml:"cache"`
 		Logs struct {
 			Journal string `yaml:"journal"`
 		} `yaml:"logs"`
 	} `yaml:"configuration"`
+	log *log.Logger
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -56,15 +59,36 @@ func loadConfig(path string) (*Config, error) {
 
 func applyDefaults(c *Config) {
 	s := &c.Configuration
-	if s.Server.ListenAddr == "" { s.Server.ListenAddr = ":8080" }
-	if s.Server.RequestTimeout == 0 { s.Server.RequestTimeout = 30 * time.Second }
-	if s.Auth.GitLabBaseURL == "" { s.Auth.GitLabBaseURL = "https://gitlab.com" }
-	if s.Auth.AuthCacheTTL == 0 { s.Auth.AuthCacheTTL = 10 * time.Minute }
-	if s.Sonatype.Upstream == "" { s.Sonatype.Upstream = "https://ossindex.sonatype.org/api/v3/component-report" }
-	if s.Sonatype.Timeout == 0 { s.Sonatype.Timeout = 20 * time.Second }
-	if s.Cache.ReportTTL == 0 { s.Cache.ReportTTL = 8 * time.Hour }
-	if s.Cache.RefreshThreshold == 0 { s.Cache.RefreshThreshold = 0.05 }
-	if s.Cache.UnusedTTL == 0 { s.Cache.UnusedTTL = 120 * time.Hour }
+	if s.Server.ListenAddr == "" {
+		s.Server.ListenAddr = ":8080"
+	}
+	if s.Server.RequestTimeout < time.Second {
+		s.Server.RequestTimeout = 30 * time.Second
+	}
+	if s.Auth.GitLabBaseURL == "" {
+		s.Auth.GitLabBaseURL = "https://gitlab.com"
+	}
+	if s.Auth.AuthCacheTTL < time.Second {
+		s.Auth.AuthCacheTTL = 10 * time.Minute
+	}
+	if s.Sonatype.Upstream == "" {
+		s.Sonatype.Upstream = "https://ossindex.sonatype.org/api/v3/component-report"
+	}
+	if s.Sonatype.Timeout < time.Second {
+		s.Sonatype.Timeout = 20 * time.Second
+	}
+	if s.Cache.UnusedTTL < time.Second {
+		s.Cache.UnusedTTL = 120 * time.Hour
+	}
+	if s.Cache.RefreshTTL < time.Second {
+		s.Cache.RefreshTTL = 12 * time.Hour
+	}
+	if s.Cache.ExpireTTL < time.Second {
+		s.Cache.ExpireTTL = 24 * 7 * time.Hour
+	}
+	if s.Cache.BatchSize < 1 {
+		s.Cache.BatchSize = 100
+	}
 }
 
 func validateConfig(c *Config) error {
@@ -74,9 +98,6 @@ func validateConfig(c *Config) error {
 	}
 	if s.Sonatype.Username == "" || s.Sonatype.APIKey == "" {
 		return errors.New("sonatype.username and sonatype.apiKey must be configured")
-	}
-	if s.Cache.RefreshThreshold < 0 || s.Cache.RefreshThreshold > 1 {
-		return errors.New("cache.refreshThreshold must be between 0 and 1")
 	}
 	return nil
 }

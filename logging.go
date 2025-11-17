@@ -11,7 +11,7 @@ import (
 // journalWriter sends log lines to systemd-journald using go-systemd.
 // It sets SYSLOG_IDENTIFIER to help filter via journalctl.
 // Logging is unconditional: messages are always sent to journald.
-type journalWriter struct{
+type journalWriter struct {
 	identifier string
 }
 
@@ -44,9 +44,10 @@ func (jw journalWriter) Write(p []byte) (int, error) {
 // Logs are emitted directly to systemd-journald with no fallback.
 func newAppLogger(cfg *Config) *log.Logger {
 	identifier := os.Args[0]
-	if cfg != nil && cfg.Configuration.Logs.Journal != "" {
+	if cfg.Configuration.Logs.Journal != "" {
 		identifier = cfg.Configuration.Logs.Journal
 	}
 	jw := journalWriter{identifier: identifier}
-	return log.New(jw, "", 0)
+	cfg.log = log.New(jw, "", 0)
+	return cfg.log
 }

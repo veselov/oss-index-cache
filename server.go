@@ -53,7 +53,7 @@ func (s *server) handleComponentReport(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	ctx, cancel := deadlineContext(r.Context(), s.cfg.Configuration.Server.RequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.Configuration.Server.RequestTimeout)
 	defer cancel()
 	gitlabClient := &http.Client{Timeout: s.cfg.Configuration.Server.RequestTimeout}
 	if err := verifyPAT(ctx, gitlabClient, s.cfg.Configuration.Auth.GitLabBaseURL, pat, s.auth); err != nil {
@@ -88,16 +88,8 @@ func (s *server) handleComponentReport(w http.ResponseWriter, r *http.Request) {
 	cacheHits := make(map[string]json.RawMessage)
 	missing := make([]string, 0)
 	for c := range unique {
-		if entry, ok, err := s.cache.Read(c); err == nil && ok {
-			if !s.cache.IsExpired(entry, now) {
-				cacheHits[c] = entry.Payload
-				_ = s.cache.Touch(c, now)
-			} else {
-				missing = append(missing, c)
-			}
-		} else if err != nil {
-			// On read error, consider as missing
-			missing = append(missing, c)
+		if entry := s.cache.Read(c); entry != nil {
+			cacheHits[c] = entry.Payload
 		} else {
 			missing = append(missing, c)
 		}
@@ -123,10 +115,8 @@ func (s *server) handleComponentReport(w http.ResponseWriter, r *http.Request) {
 	}
 	// Persist upstream results
 	for coord, payload := range upstreamResults {
-		entry := &CacheEntry{Version: 1, Coordinate: coord, RetrievedAt: now, LastAccessedAt: now, Payload: payload}
-		if err := s.cache.Write(entry); err != nil {
-			s.logger.Printf("cache write error coord=%s err=%v", coord, err)
-		}
+		entry := &CacheEntry{Coordinate: coord, RetrievedAt: now, LastAccessedAt: &now, Payload: payload}
+		s.cache.Write(entry)
 	}
 
 	// Merge results and verify completeness before writing any response

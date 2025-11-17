@@ -20,7 +20,7 @@ type upstreamResponseItem struct {
 	Payload    json.RawMessage `json:"-"` // we'll keep the raw
 }
 
-// fetchFromUpstream posts missing coordinates to Sonatype and returns a map from coordinate to raw JSON object.
+// fetchFromUpstream posts missing coordinates to Sonatype and returns a map from coordinate to a raw JSON object.
 func fetchFromUpstream(ctx context.Context, client *http.Client, upstreamURL, username, apiKey string, coords []string, logger *log.Logger) (map[string]json.RawMessage, int, error) {
 	if len(coords) == 0 {
 		return map[string]json.RawMessage{}, http.StatusOK, nil
@@ -65,18 +65,23 @@ func fetchFromUpstream(ctx context.Context, client *http.Client, upstreamURL, us
 			Coordinate string `json:"coordinates"`
 		}
 		if err := json.Unmarshal(item, &tmp); err != nil {
+			logger.Printf("upstream item unmarshal error: %v", err)
 			continue
 		}
 		if tmp.Coordinate == "" {
+			// Try singular as well just in case
+			var tmp2 struct {
+				Coordinate string `json:"coordinate"`
+			}
+			_ = json.Unmarshal(item, &tmp2)
+			tmp.Coordinate = tmp2.Coordinate
+		}
+		if tmp.Coordinate == "" {
+			logger.Printf("upstream item missing coordinate: %s", string(item))
 			continue
 		}
 		result[tmp.Coordinate] = item
 	}
 	logger.Printf("upstream success url=%s status=%d coords=%d dur=%s", uHost, resp.StatusCode, len(result), time.Since(start))
 	return result, resp.StatusCode, nil
-}
-
-// deadlineContext returns a context with deadline by timeout from now.
-func deadlineContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, timeout)
 }
