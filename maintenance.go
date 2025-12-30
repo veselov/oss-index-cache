@@ -7,7 +7,7 @@ import (
 )
 
 // startMaintenance launches a background goroutine that periodically scans the cache
-// to evict unused entries and refresh nearly-expired entries by prefetching them.
+// to evict unused entries and refresh nearly expired entries by prefetching them.
 func startMaintenance(ctx context.Context, cfg *Config, cache *DiskCache, logger *log.Logger, fetch func(ctx context.Context, coords []string) map[string]error) {
 	interval := time.Minute // periodic check
 	go func() {
@@ -36,7 +36,9 @@ func startMaintenance(ctx context.Context, cfg *Config, cache *DiskCache, logger
 				batch := 100
 				for i := 0; i < len(toRefresh); i += batch {
 					j := i + batch
-					if j > len(toRefresh) { j = len(toRefresh) }
+					if j > len(toRefresh) {
+						j = len(toRefresh)
+					}
 					coords := toRefresh[i:j]
 					ctx2, cancel := context.WithTimeout(ctx, cfg.Configuration.Sonatype.Timeout)
 					errs := fetch(ctx2, coords)

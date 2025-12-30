@@ -53,7 +53,7 @@ func (s *server) handleComponentReport(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	ctx, cancel := deadlineContext(r.Context(), s.cfg.Configuration.Server.RequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.Configuration.Server.RequestTimeout)
 	defer cancel()
 	gitlabClient := &http.Client{Timeout: s.cfg.Configuration.Server.RequestTimeout}
 	if err := verifyPAT(ctx, gitlabClient, s.cfg.Configuration.Auth.GitLabBaseURL, pat, s.auth); err != nil {

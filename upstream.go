@@ -75,8 +75,3 @@ func fetchFromUpstream(ctx context.Context, client *http.Client, upstreamURL, us
 	logger.Printf("upstream success url=%s status=%d coords=%d dur=%s", uHost, resp.StatusCode, len(result), time.Since(start))
 	return result, resp.StatusCode, nil
 }
-
-// deadlineContext returns a context with deadline by timeout from now.
-func deadlineContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, timeout)
-}

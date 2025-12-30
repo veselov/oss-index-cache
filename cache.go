@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -27,8 +28,8 @@ type DiskCache struct {
 	reportTTL        time.Duration
 	unusedTTL        time.Duration
 	refreshThreshold float64
-	mu               sync.Mutex             // guards per-key locking map
-	locks            map[string]*sync.Mutex // per key
+	cond             *sync.Cond
+	locked           map[string]uint // Locked keys. Value: 0 -> exclusive, >0 -> shared, nil -> unlocked
 }
 
 func NewDiskCache(dir string, reportTTL, unusedTTL time.Duration, refreshThreshold float64) (*DiskCache, error) {
@@ -38,7 +39,15 @@ func NewDiskCache(dir string, reportTTL, unusedTTL time.Duration, refreshThresho
 	if refreshThreshold <= 0 {
 		refreshThreshold = 0.05
 	}
-	return &DiskCache{dir: dir, reportTTL: reportTTL, unusedTTL: unusedTTL, refreshThreshold: refreshThreshold, locks: make(map[string]*sync.Mutex)}, nil
+
+	return &DiskCache{
+		dir:              dir,
+		reportTTL:        reportTTL,
+		unusedTTL:        unusedTTL,
+		refreshThreshold: refreshThreshold,
+		cond:             sync.NewCond(&sync.Mutex{}),
+		locked:           make(map[string]uint),
+	}, nil
 }
 
 func (c *DiskCache) keyToPath(coord string) string {
@@ -47,19 +56,64 @@ func (c *DiskCache) keyToPath(coord string) string {
 	return filepath.Join(c.dir, name)
 }
 
-func (c *DiskCache) lockKey(coord string) func() {
-	c.mu.Lock()
-	m, ok := c.locks[coord]
-	if !ok {
-		m = &sync.Mutex{}
-		c.locks[coord] = m
+func (c *DiskCache) lockKey(coord string, exclusive bool) func() {
+
+	c.cond.L.Lock()
+	defer c.cond.L.Unlock()
+
+	for {
+
+		lock, present := c.locked[coord]
+
+		if !present || (!exclusive && lock > 0) {
+
+			if exclusive {
+				c.locked[coord] = 0
+			} else {
+				if lock == ^uint(0) {
+					log.Panicf("Lock wrap-around for %s", coord)
+				}
+				c.locked[coord] = lock + 1
+			}
+
+			return func() {
+				c.cond.L.Lock()
+				defer c.cond.L.Unlock()
+				lock, present := c.locked[coord]
+				if !present {
+					log.Panicf("Lock for %s has no lock on unlock", coord)
+				}
+				if exclusive {
+					if lock != 0 {
+						log.Panicf("Exclusive lock %s with !0 value %d", coord, lock)
+					}
+					delete(c.locked, coord)
+				} else {
+					if lock < 1 {
+						log.Panicf("Shared lock %s with value %d out-of-bounds", coord, lock)
+					}
+					if lock == 1 {
+						delete(c.locked, coord)
+					} else {
+						c.locked[coord] = lock - 1
+					}
+				}
+				c.cond.Broadcast()
+			}
+
+		}
+
+		c.cond.Wait()
+
 	}
-	c.mu.Unlock()
-	m.Lock()
-	return func() { m.Unlock() }
+
 }
 
 func (c *DiskCache) Read(coord string) (*CacheEntry, bool, error) {
+
+	unlock := c.lockKey(coord, false)
+	defer unlock()
+
 	path := c.keyToPath(coord)
 	f, err := os.Open(path)
 	if err != nil {
@@ -82,7 +136,7 @@ func (c *DiskCache) Read(coord string) (*CacheEntry, bool, error) {
 }
 
 func (c *DiskCache) Write(e *CacheEntry) error {
-	unlock := c.lockKey(e.Coordinate)
+	unlock := c.lockKey(e.Coordinate, true)
 	defer unlock()
 	path := c.keyToPath(e.Coordinate)
 	if b, err := os.ReadFile(path); err == nil {
@@ -93,7 +147,7 @@ func (c *DiskCache) Write(e *CacheEntry) error {
 			}
 		}
 	}
-	// atomic write: temp then rename
+	// write atomically: temp then rename
 	tmp := path + ".tmp"
 	b, err := json.MarshalIndent(e, "", "  ")
 	if err != nil {
@@ -106,7 +160,7 @@ func (c *DiskCache) Write(e *CacheEntry) error {
 }
 
 func (c *DiskCache) MarkUsed(coord string, now time.Time) error {
-	unlock := c.lockKey(coord)
+	unlock := c.lockKey(coord, true)
 	defer unlock()
 
 	path := c.keyToPath(coord)
@@ -132,7 +186,7 @@ func (c *DiskCache) MarkUsed(coord string, now time.Time) error {
 }
 
 func (c *DiskCache) Touch(coord string, when time.Time) error {
-	unlock := c.lockKey(coord)
+	unlock := c.lockKey(coord, true)
 	defer unlock()
 	path := c.keyToPath(coord)
 	b, err := os.ReadFile(path)
@@ -212,7 +266,7 @@ func (c *DiskCache) Scan(now time.Time) (toRefresh []string, toEvict []string, e
 }
 
 func (c *DiskCache) Evict(coord string) error {
-	unlock := c.lockKey(coord)
+	unlock := c.lockKey(coord, true)
 	defer unlock()
 	path := c.keyToPath(coord)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
