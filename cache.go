@@ -192,7 +192,7 @@ func (c *DiskCache) Scan(now time.Time) (toRefresh []string, toEvict []string, e
 			toEvict = append(toEvict, e.Coordinate)
 			continue
 		}
-		// refresh: below threshold of remaining TTL
+		// refresh: below the threshold of remaining TTL
 		age := now.Sub(e.RetrievedAt)
 		if age < 0 {
 			age = 0
