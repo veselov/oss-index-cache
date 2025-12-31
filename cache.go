@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -15,45 +14,47 @@ import (
 )
 
 type CacheEntry struct {
+	path           *string
 	Version        int             `json:"version"`
 	Coordinate     string          `json:"coordinate"`
 	RetrievedAt    time.Time       `json:"retrieved_at"`
-	LastAccessedAt time.Time       `json:"last_accessed_at"`
-	LastUsed       time.Time       `json:"last_used"`
+	LastAccessedAt *time.Time      `json:"last_accessed_at"`
 	Payload        json.RawMessage `json:"payload"`
 }
 
 type DiskCache struct {
 	dir              string
-	reportTTL        time.Duration
+	expireTTL        time.Duration
+	refreshTTL       time.Duration
 	unusedTTL        time.Duration
 	refreshThreshold float64
 	cond             *sync.Cond
 	locked           map[string]uint // Locked keys. Value: 0 -> exclusive, >0 -> shared, nil -> unlocked
+	log              *log.Logger
 }
 
-func NewDiskCache(dir string, reportTTL, unusedTTL time.Duration, refreshThreshold float64) (*DiskCache, error) {
+func NewDiskCache(cfg *Config) (*DiskCache, error) {
+
+	dir := cfg.Configuration.Cache.Directory
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	if refreshThreshold <= 0 {
-		refreshThreshold = 0.05
-	}
 
 	return &DiskCache{
-		dir:              dir,
-		reportTTL:        reportTTL,
-		unusedTTL:        unusedTTL,
-		refreshThreshold: refreshThreshold,
-		cond:             sync.NewCond(&sync.Mutex{}),
-		locked:           make(map[string]uint),
+		dir:        dir,
+		refreshTTL: cfg.Configuration.Cache.RefreshTTL,
+		expireTTL:  cfg.Configuration.Cache.ExpireTTL,
+		unusedTTL:  cfg.Configuration.Cache.UnusedTTL,
+		cond:       sync.NewCond(&sync.Mutex{}),
+		locked:     make(map[string]uint),
 	}, nil
 }
 
-func (c *DiskCache) keyToPath(coord string) string {
+func (c *DiskCache) keyToPath(coord string) *string {
 	sum := sha256.Sum256([]byte(coord))
-	name := hex.EncodeToString(sum[:]) + ".json"
-	return filepath.Join(c.dir, name)
+	name := hex.EncodeToString(sum[:])
+	p := filepath.Join(c.dir, name+".json")
+	return &p
 }
 
 func (c *DiskCache) lockKey(coord string, exclusive bool) func() {
@@ -71,34 +72,38 @@ func (c *DiskCache) lockKey(coord string, exclusive bool) func() {
 				c.locked[coord] = 0
 			} else {
 				if lock == ^uint(0) {
-					log.Panicf("Lock wrap-around for %s", coord)
+					c.log.Panicf("Lock wrap-around for %s", coord)
 				}
 				c.locked[coord] = lock + 1
 			}
 
+			var once sync.Once
+
 			return func() {
-				c.cond.L.Lock()
-				defer c.cond.L.Unlock()
-				lock, present := c.locked[coord]
-				if !present {
-					log.Panicf("Lock for %s has no lock on unlock", coord)
-				}
-				if exclusive {
-					if lock != 0 {
-						log.Panicf("Exclusive lock %s with !0 value %d", coord, lock)
+				once.Do(func() {
+					c.cond.L.Lock()
+					defer c.cond.L.Unlock()
+					lock, present := c.locked[coord]
+					if !present {
+						c.log.Panicf("Lock for %s has no lock on unlock", coord)
 					}
-					delete(c.locked, coord)
-				} else {
-					if lock < 1 {
-						log.Panicf("Shared lock %s with value %d out-of-bounds", coord, lock)
-					}
-					if lock == 1 {
+					if exclusive {
+						if lock != 0 {
+							c.log.Panicf("Exclusive lock %s with !0 value %d", coord, lock)
+						}
 						delete(c.locked, coord)
 					} else {
-						c.locked[coord] = lock - 1
+						if lock < 1 {
+							c.log.Panicf("Shared lock %s with value %d out-of-bounds", coord, lock)
+						}
+						if lock == 1 {
+							delete(c.locked, coord)
+						} else {
+							c.locked[coord] = lock - 1
+						}
 					}
-				}
-				c.cond.Broadcast()
+					c.cond.Broadcast()
+				})
 			}
 
 		}
@@ -109,168 +114,164 @@ func (c *DiskCache) lockKey(coord string, exclusive bool) func() {
 
 }
 
-func (c *DiskCache) Read(coord string) (*CacheEntry, bool, error) {
+func (c *DiskCache) ReadLocked(path string, access bool) *CacheEntry {
 
-	unlock := c.lockKey(coord, false)
-	defer unlock()
+	remove := func() {
+		err := os.Remove(path)
+		if err != nil {
+			c.log.Printf("failed to remove corrupt cache entry %s: %v", path, err)
+		}
+	}
 
-	path := c.keyToPath(coord)
 	f, err := os.Open(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
+		if !os.IsNotExist(err) {
+			c.log.Printf("failed to read cache entry %s: %v", path, err)
 		}
-		return nil, false, err
+		return nil
 	}
+
 	defer f.Close()
 	b, err := io.ReadAll(f)
 	if err != nil {
-		return nil, false, err
+		c.log.Printf("failed to read cache entry %s: %v", path, err)
+		return nil
 	}
+
 	var e CacheEntry
 	if err := json.Unmarshal(b, &e); err != nil {
-		return nil, false, err
+		c.log.Printf("read %s: %v", path, err)
+		remove()
+		return nil
 	}
-	// update last accessed in memory; caller must call Touch to persist update to avoid heavy writes per read
-	return &e, true, nil
+	e.path = &path
+
+	if e.RetrievedAt.Add(c.expireTTL).Before(time.Now()) {
+		c.log.Printf("expired %s", e.Coordinate)
+		remove()
+		return nil
+	}
+
+	if access {
+		t := time.Now()
+		e.LastAccessedAt = &t
+		// c.Write(&e) // DEADLOCK: Read calls Write, both try to lock!
+		// We should call something that doesn't re-lock or just do the write here.
+		c.writeLocked(&e)
+	}
+
+	return &e
 }
 
-func (c *DiskCache) Write(e *CacheEntry) error {
-	unlock := c.lockKey(e.Coordinate, true)
+func (c *DiskCache) Read(coord string) *CacheEntry {
+
+	path := c.keyToPath(coord)
+
+	// Since ReadLocked with access=true calls writeLocked, which needs an EXCLUSIVE lock,
+	// and Read calls ReadLocked(access=true), we MUST use an exclusive lock here too.
+	// If we used a shared lock, writeLocked would be operating under a shared lock,
+	// which is a race condition.
+	unlock := c.lockKey(*path, true)
 	defer unlock()
-	path := c.keyToPath(e.Coordinate)
-	if b, err := os.ReadFile(path); err == nil {
-		var prev CacheEntry
-		if json.Unmarshal(b, &prev) == nil {
-			if e.LastUsed.IsZero() {
-				e.LastUsed = prev.LastUsed
-			}
+
+	return c.ReadLocked(*path, true)
+}
+
+func (c *DiskCache) Write(e *CacheEntry) {
+
+	if e.path == nil {
+		e.path = c.keyToPath(e.Coordinate)
+	}
+
+	unlock := c.lockKey(*e.path, true)
+	defer unlock()
+
+	c.writeLocked(e)
+}
+
+func (c *DiskCache) writeLocked(e *CacheEntry) {
+
+	if e.LastAccessedAt == nil {
+		// write request is from a refresh operation
+		old := c.ReadLocked(*e.path, false)
+		if old == nil {
+			// this is a race condition. While we were refreshing,
+			// the entry was evicted. Probably because it was deemed unused.
+			// We have two choices - put it back in and assume last access time = now
+			// or not put it back in because it probably doesn't belong.
+			// We choose the former because it will benefit the clients at the expense
+			// of the cache size.
+			now := time.Now()
+			e.LastAccessedAt = &now
+		} else {
+			e.LastAccessedAt = old.LastAccessedAt
 		}
 	}
+
 	// write atomically: temp then rename
-	tmp := path + ".tmp"
+	tmp := *e.path + ".tmp"
 	b, err := json.MarshalIndent(e, "", "  ")
 	if err != nil {
-		return err
+		c.log.Printf("failed to marshal cache entry %s: %v", e.Coordinate, err)
+		return
 	}
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
+		c.log.Printf("failed to write cache entry %s (%s): %v", e.Coordinate, tmp, err)
+		return
 	}
-	return os.Rename(tmp, path)
+	err = os.Rename(tmp, *e.path)
+	if err != nil {
+		c.log.Printf("failed to rename cache entry %s %s->%s: %v", e.Coordinate, tmp, *e.path, err)
+	}
 }
 
-func (c *DiskCache) MarkUsed(coord string, now time.Time) error {
-	unlock := c.lockKey(coord, true)
+func (c *DiskCache) ScanItem(now time.Time, path string, refresh func(e *CacheEntry) error) error {
+
+	unlock := c.lockKey(path, true)
 	defer unlock()
 
-	path := c.keyToPath(coord)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
+	e := c.ReadLocked(path, false)
+	if e == nil {
+		return nil
 	}
 
-	var e CacheEntry
-	if err := json.Unmarshal(b, &e); err != nil {
-		return err
+	// Expired is handled by ReadLocked()
+
+	// Handle unused here
+	if e.LastAccessedAt.Add(c.unusedTTL).Before(now) {
+		if err := os.Remove(path); err != nil {
+			c.log.Printf("failed to remove unused cache entry %s: %v", path, err)
+			return err
+		}
+		return nil
 	}
 
-	e.LastUsed = now
-	e.LastAccessedAt = now
-
-	tmp := path + ".tmp"
-	buf, _ := json.MarshalIndent(&e, "", "  ")
-	if err := os.WriteFile(tmp, buf, 0o600); err != nil {
-		return err
+	// Handle refresh
+	if (e.RetrievedAt.Add(c.refreshTTL)).Before(now) {
+		return refresh(e)
 	}
-	return os.Rename(tmp, path)
+
+	return nil
+
 }
 
-func (c *DiskCache) Touch(coord string, when time.Time) error {
-	unlock := c.lockKey(coord, true)
-	defer unlock()
-	path := c.keyToPath(coord)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var e CacheEntry
-	if err := json.Unmarshal(b, &e); err != nil {
-		return err
-	}
-	e.LastAccessedAt = when
-	buf, err := json.MarshalIndent(&e, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, buf, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
+// Scan performs a full directory scan and invokes fn for every element needing refresh or eviction.
+func (c *DiskCache) Scan(now time.Time, refresh func(e *CacheEntry) error) error {
+	return filepath.WalkDir(c.dir, func(path string, d fs.DirEntry, err error) error {
 
-func (c *DiskCache) IsExpired(e *CacheEntry, now time.Time) bool {
-	return e.RetrievedAt.Add(c.reportTTL).Before(now)
-}
-
-// Scan performs a full directory scan and returns coordinates needing refresh or eviction based on TTLs.
-func (c *DiskCache) Scan(now time.Time) (toRefresh []string, toEvict []string, err error) {
-	entries := []CacheEntry{}
-	err = filepath.WalkDir(c.dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+
 		if d.IsDir() {
 			return nil
 		}
+
 		if filepath.Ext(path) != ".json" {
 			return nil
 		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		var e CacheEntry
-		if err := json.Unmarshal(b, &e); err != nil {
-			return err
-		}
-		entries = append(entries, e)
-		return nil
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, e := range entries {
-		// eviction: last_accessed older than unusedTTL
-		if e.LastUsed.Add(c.unusedTTL).Before(now) {
-			toEvict = append(toEvict, e.Coordinate)
-			continue
-		}
-		// refresh: below the threshold of remaining TTL
-		age := now.Sub(e.RetrievedAt)
-		if age < 0 {
-			age = 0
-		}
-		if c.reportTTL > 0 {
-			remaining := c.reportTTL - age
-			threshold := c.refreshThreshold
-			if threshold <= 0 {
-				threshold = 0.05
-			}
-			if remaining < time.Duration(float64(c.reportTTL)*threshold) {
-				toRefresh = append(toRefresh, e.Coordinate)
-			}
-		}
-	}
-	return toRefresh, toEvict, nil
-}
 
-func (c *DiskCache) Evict(coord string) error {
-	unlock := c.lockKey(coord, true)
-	defer unlock()
-	path := c.keyToPath(coord)
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("evict %s: %w", coord, err)
-	}
-	return nil
+		return c.ScanItem(now, path, refresh)
+
+	})
 }

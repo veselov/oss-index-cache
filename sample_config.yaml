@@ -16,10 +16,10 @@ configuration:
 
   cache:
     directory: test
-    reportTtl: 8h # time until report becomes expired, since its last retrieval
-    refreshThreshold: 0.05 # When report is re-requested from upstream in percentage of its TTL
+    refreshTtl: 8h # time until reports become eligible for being refreshed, since their last retrieval.
+    expireTtl: 96h # time until reports become expired, since their last retrieval, and can no longer be used unless re-acquired from upstream.
     unusedTtl: 120h # how long since a report is last accessed before it's evicted from the cache entirely
     
   logs:
-    # journal: # if configured, specifies the journal name for journalctl, if not configured, process name is used.
+    # journal: # if configured, specifies the journal name for journalctl, if not configured, the process name is used.
 

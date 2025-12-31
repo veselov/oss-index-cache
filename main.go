@@ -14,15 +14,17 @@ import (
 )
 
 type loggingResponseWriter struct {
-	w       http.ResponseWriter
-	status  int
-	bytes   int
+	w      http.ResponseWriter
+	status int
+	bytes  int
 }
 
-func (lrw *loggingResponseWriter) Header() http.Header { return lrw.w.Header() }
+func (lrw *loggingResponseWriter) Header() http.Header  { return lrw.w.Header() }
 func (lrw *loggingResponseWriter) WriteHeader(code int) { lrw.status = code; lrw.w.WriteHeader(code) }
 func (lrw *loggingResponseWriter) Write(p []byte) (int, error) {
-	if lrw.status == 0 { lrw.status = http.StatusOK }
+	if lrw.status == 0 {
+		lrw.status = http.StatusOK
+	}
 	n, err := lrw.w.Write(p)
 	lrw.bytes += n
 	return n, err
@@ -34,12 +36,16 @@ func withLogging(next http.Handler, logger *log.Logger) http.Handler {
 		lrw := &loggingResponseWriter{w: w}
 		// Get remote IP without port
 		remote := r.RemoteAddr
-		if host, _, err := net.SplitHostPort(remote); err == nil { remote = host }
+		if host, _, err := net.SplitHostPort(remote); err == nil {
+			remote = host
+		}
 		ua := r.Header.Get("User-Agent")
 		next.ServeHTTP(lrw, r)
 		dur := time.Since(start)
 		status := lrw.status
-		if status == 0 { status = http.StatusOK }
+		if status == 0 {
+			status = http.StatusOK
+		}
 		path := r.URL.Path
 		// collapse whitespace in UA to keep logs short
 		ua = strings.Join(strings.Fields(ua), " ")
@@ -64,8 +70,10 @@ func main() {
 	}
 	logger := newAppLogger(cfg)
 
- cache, err := NewDiskCache(cfg.Configuration.Cache.Directory, cfg.Configuration.Cache.ReportTTL, cfg.Configuration.Cache.UnusedTTL, cfg.Configuration.Cache.RefreshThreshold)
-	if err != nil { log.Fatalf("cache init: %v", err) }
+	cache, err := NewDiskCache(cfg)
+	if err != nil {
+		log.Fatalf("cache init: %v", err)
+	}
 	authCache := newPatCache(cfg.Configuration.Auth.AuthCacheTTL, logger)
 
 	// Server and routes
@@ -91,7 +99,9 @@ func main() {
 		out := make(map[string]error, len(coords))
 		now := time.Now()
 		if err != nil {
-			for _, c := range coords { out[c] = err }
+			for _, c := range coords {
+				out[c] = err
+			}
 			return out
 		}
 		for _, c := range coords {
@@ -100,12 +110,12 @@ func main() {
 				out[c] = err
 				continue
 			}
-			entry := &CacheEntry{Version:1, Coordinate: c, RetrievedAt: now, LastAccessedAt: now, Payload: payload}
-			out[c] = cache.Write(entry)
+			entry := &CacheEntry{Version: 1, Coordinate: c, RetrievedAt: now, Payload: payload}
+			cache.Write(entry)
 		}
 		return out
 	}
-	startMaintenance(ctx, cfg, cache, logger, refreshFn)
+	startMaintenance(ctx, cfg, cache, refreshFn)
 
 	// Run HTTP server
 	done := make(chan struct{})
