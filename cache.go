@@ -47,6 +47,7 @@ func NewDiskCache(cfg *Config) (*DiskCache, error) {
 		unusedTTL:  cfg.Configuration.Cache.UnusedTTL,
 		cond:       sync.NewCond(&sync.Mutex{}),
 		locked:     make(map[string]uint),
+		log:        cfg.log,
 	}, nil
 }
 

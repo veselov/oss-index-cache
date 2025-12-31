@@ -400,3 +400,39 @@ func TestDiskCacheVersionMigration(t *testing.T) {
 		t.Errorf("expected version 2, got %d", read2.Version)
 	}
 }
+
+func TestDiskCacheLoggerInitialization(t *testing.T) {
+	dir, err := os.MkdirTemp("", "cache-test-log-init-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	cfg := createTestConfig(dir)
+	// We specifically want to test that NewDiskCache sets the logger from cfg
+	cache, err := NewDiskCache(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cache.log == nil {
+		t.Fatal("cache.log was not initialized from cfg.log")
+	}
+
+	// Trigger a log message (version mismatch)
+	coord := "pkg:maven/log/test@1.0.0"
+	path := *cache.keyToPath(coord)
+	v1Entry := map[string]interface{}{
+		"version":    1,
+		"coordinate": coord,
+		"payload":    map[string]interface{}{},
+	}
+	b, _ := json.Marshal(v1Entry)
+	os.WriteFile(path, b, 0600)
+
+	// This should log "invalid version 1..." but NOT crash
+	read := cache.Read(coord)
+	if read != nil {
+		t.Error("expected nil for version 1 entry")
+	}
+}
