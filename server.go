@@ -115,7 +115,7 @@ func (s *server) handleComponentReport(w http.ResponseWriter, r *http.Request) {
 	}
 	// Persist upstream results
 	for coord, payload := range upstreamResults {
-		entry := &CacheEntry{Version: 1, Coordinate: coord, RetrievedAt: now, LastAccessedAt: &now, Payload: payload}
+		entry := &CacheEntry{Coordinate: coord, RetrievedAt: now, LastAccessedAt: &now, Payload: payload}
 		s.cache.Write(entry)
 	}
 

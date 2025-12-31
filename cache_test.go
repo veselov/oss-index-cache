@@ -50,6 +50,9 @@ func TestDiskCacheCRUD(t *testing.T) {
 	if readEntry == nil {
 		t.Fatal("expected entry to be found")
 	}
+	if readEntry.Version != 2 {
+		t.Errorf("expected version 2, got %d", readEntry.Version)
+	}
 	if readEntry.Coordinate != coord {
 		t.Errorf("expected coord %s, got %s", coord, readEntry.Coordinate)
 	}
@@ -340,5 +343,60 @@ func TestDiskCacheCorruptFile(t *testing.T) {
 
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Error("expected corrupt file to be removed")
+	}
+}
+
+func TestDiskCacheVersionMigration(t *testing.T) {
+	dir, err := os.MkdirTemp("", "cache-test-version-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	cfg := createTestConfig(dir)
+	cache, err := NewDiskCache(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.log = cfg.log
+
+	coord := "pkg:maven/version/test@1.0.0"
+	path := *cache.keyToPath(coord)
+
+	// Manually write a version 1 entry
+	v1Entry := map[string]interface{}{
+		"version":          1,
+		"coordinate":       coord,
+		"retrieved_at":     time.Now().Format(time.RFC3339Nano),
+		"last_accessed_at": time.Now().Format(time.RFC3339Nano),
+		"payload":          map[string]interface{}{},
+	}
+	b, _ := json.Marshal(v1Entry)
+	os.WriteFile(path, b, 0600)
+
+	// Read should return nil and remove the file
+	read := cache.Read(coord)
+	if read != nil {
+		t.Error("expected nil for version 1 entry")
+	}
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("expected version 1 file to be removed")
+	}
+
+	// Write should now set version 2
+	newEntry := &CacheEntry{
+		Coordinate:  coord,
+		RetrievedAt: time.Now(),
+		Payload:     json.RawMessage(`{}`),
+	}
+	cache.Write(newEntry)
+
+	read2 := cache.Read(coord)
+	if read2 == nil {
+		t.Fatal("expected entry to be written and read back")
+	}
+	if read2.Version != 2 {
+		t.Errorf("expected version 2, got %d", read2.Version)
 	}
 }

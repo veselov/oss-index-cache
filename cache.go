@@ -146,6 +146,12 @@ func (c *DiskCache) ReadLocked(path string, access bool) *CacheEntry {
 	}
 	e.path = &path
 
+	if e.Version < 2 {
+		c.log.Printf("invalid version %d for %s", e.Version, e.Coordinate)
+		remove()
+		return nil
+	}
+
 	if e.RetrievedAt.Add(c.expireTTL).Before(time.Now()) {
 		c.log.Printf("expired %s", e.Coordinate)
 		remove()
@@ -190,6 +196,8 @@ func (c *DiskCache) Write(e *CacheEntry) {
 }
 
 func (c *DiskCache) writeLocked(e *CacheEntry) {
+
+	e.Version = 2
 
 	if e.LastAccessedAt == nil {
 		// write request is from a refresh operation
