@@ -20,7 +20,7 @@ type upstreamResponseItem struct {
 	Payload    json.RawMessage `json:"-"` // we'll keep the raw
 }
 
-// fetchFromUpstream posts missing coordinates to Sonatype and returns a map from coordinate to raw JSON object.
+// fetchFromUpstream posts missing coordinates to Sonatype and returns a map from coordinate to a raw JSON object.
 func fetchFromUpstream(ctx context.Context, client *http.Client, upstreamURL, username, apiKey string, coords []string, logger *log.Logger) (map[string]json.RawMessage, int, error) {
 	if len(coords) == 0 {
 		return map[string]json.RawMessage{}, http.StatusOK, nil

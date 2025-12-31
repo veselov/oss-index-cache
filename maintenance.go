@@ -40,7 +40,10 @@ func refresher(ctx context.Context, cfg *Config, fetch func(ctx context.Context,
 // startMaintenance launches a background goroutine that periodically scans the cache
 // to evict unused entries and refresh nearly expired entries by prefetching them.
 func startMaintenance(ctx context.Context, cfg *Config, cache *DiskCache, fetch func(ctx context.Context, coords []string) map[string]error) {
-	interval := time.Minute // periodic check
+	startMaintenanceInterval(ctx, cfg, cache, fetch, time.Minute)
+}
+
+func startMaintenanceInterval(ctx context.Context, cfg *Config, cache *DiskCache, fetch func(ctx context.Context, coords []string) map[string]error, interval time.Duration) {
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()
@@ -54,11 +57,13 @@ func startMaintenance(ctx context.Context, cfg *Config, cache *DiskCache, fetch 
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				cfg.log.Printf("running maintenance scan")
 				now := time.Now()
 				var toRefresh []string
 				err := cache.Scan(now, func(e *CacheEntry) error {
+					cfg.log.Printf("Slating maintenance refresh for %s:%s", e.Coordinate, *e.path)
 					toRefresh = append(toRefresh, e.Coordinate)
-					if len(toRefresh) >= 100 {
+					if len(toRefresh) >= cfg.Configuration.Cache.BatchSize {
 						refresher <- toRefresh
 						toRefresh = []string{}
 					}

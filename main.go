@@ -72,7 +72,7 @@ func main() {
 
 	cache, err := NewDiskCache(cfg)
 	if err != nil {
-		log.Fatalf("cache init: %v", err)
+		logger.Fatalf("cache init: %v", err)
 	}
 	authCache := newPatCache(cfg.Configuration.Auth.AuthCacheTTL, logger)
 

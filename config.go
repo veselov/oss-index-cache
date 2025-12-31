@@ -32,6 +32,7 @@ type Config struct {
 			ExpireTTL  time.Duration `yaml:"expireTtl"`
 			RefreshTTL time.Duration `yaml:"refreshTtl"`
 			UnusedTTL  time.Duration `yaml:"unusedTtl"`
+			BatchSize  int           `yaml:"batchSize"`
 		} `yaml:"cache"`
 		Logs struct {
 			Journal string `yaml:"journal"`
@@ -78,6 +79,9 @@ func applyDefaults(c *Config) {
 	}
 	if s.Cache.UnusedTTL < time.Second {
 		s.Cache.UnusedTTL = 120 * time.Hour
+	}
+	if s.Cache.BatchSize < 1 {
+		s.Cache.BatchSize = 100
 	}
 }
 
