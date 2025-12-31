@@ -44,7 +44,7 @@ func TestServerHandleComponentReport(t *testing.T) {
 			results := []map[string]interface{}{}
 			for _, c := range req.Coordinates {
 				results = append(results, map[string]interface{}{
-					"coordinate":      c,
+					"coordinates":     c,
 					"vulnerabilities": []interface{}{},
 				})
 			}

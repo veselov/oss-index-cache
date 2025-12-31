@@ -80,6 +80,12 @@ func applyDefaults(c *Config) {
 	if s.Cache.UnusedTTL < time.Second {
 		s.Cache.UnusedTTL = 120 * time.Hour
 	}
+	if s.Cache.RefreshTTL < time.Second {
+		s.Cache.RefreshTTL = 12 * time.Hour
+	}
+	if s.Cache.ExpireTTL < time.Second {
+		s.Cache.ExpireTTL = 24 * 7 * time.Hour
+	}
 	if s.Cache.BatchSize < 1 {
 		s.Cache.BatchSize = 100
 	}

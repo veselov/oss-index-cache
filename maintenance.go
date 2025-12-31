@@ -76,7 +76,10 @@ func startMaintenanceInterval(ctx context.Context, cfg *Config, cache *DiskCache
 
 				if err != nil {
 					cfg.log.Printf("maintenance scan error: %v", err)
+				} else {
+					cfg.log.Printf("maintenance scan completed")
 				}
+
 			}
 		}
 	}()
