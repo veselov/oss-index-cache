@@ -44,7 +44,7 @@ func TestServerHandleComponentReport(t *testing.T) {
 			results := []map[string]interface{}{}
 			for _, c := range req.Coordinates {
 				results = append(results, map[string]interface{}{
-					"coordinates":     c,
+					"coordinate":      c,
 					"vulnerabilities": []interface{}{},
 				})
 			}
@@ -208,6 +208,30 @@ func TestServerHandleComponentReport(t *testing.T) {
 
 		if string(expectedStr) != string(actualStr) {
 			t.Errorf("expected payload %s, got %s", string(expectedStr), string(actualStr))
+		}
+	})
+
+	t.Run("UpstreamPersistence", func(t *testing.T) {
+		coord := "new-upstream-pkg"
+		reqBody, _ := json.Marshal(componentRequest{Coordinates: []string{coord}})
+		req := httptest.NewRequest(http.MethodPost, "/api/v3/component-report", bytes.NewReader(reqBody))
+		req.SetBasicAuth("user", "valid-token")
+		w := httptest.NewRecorder()
+
+		s.handleComponentReport(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		// Check if it's in cache now
+		entry := cache.Read(coord)
+		if entry == nil {
+			t.Errorf("expected coordinate %s to be persisted in cache", coord)
+		} else {
+			if entry.Coordinate != coord {
+				t.Errorf("expected cached coordinate %s, got %s", coord, entry.Coordinate)
+			}
 		}
 	})
 }

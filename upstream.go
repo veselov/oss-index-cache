@@ -62,12 +62,22 @@ func fetchFromUpstream(ctx context.Context, client *http.Client, upstreamURL, us
 	for _, item := range arr {
 		// Each item should have a coordinate field; keep the whole item as payload
 		var tmp struct {
-			Coordinate string `json:"coordinates"`
+			Coordinate string `json:"coordinate"`
 		}
 		if err := json.Unmarshal(item, &tmp); err != nil {
+			logger.Printf("upstream item unmarshal error: %v", err)
 			continue
 		}
 		if tmp.Coordinate == "" {
+			// Try plural as well just in case, though singular is standard
+			var tmp2 struct {
+				Coordinate string `json:"coordinates"`
+			}
+			_ = json.Unmarshal(item, &tmp2)
+			tmp.Coordinate = tmp2.Coordinate
+		}
+		if tmp.Coordinate == "" {
+			logger.Printf("upstream item missing coordinate: %s", string(item))
 			continue
 		}
 		result[tmp.Coordinate] = item

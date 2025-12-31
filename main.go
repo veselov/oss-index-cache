@@ -110,7 +110,7 @@ func main() {
 				out[c] = err
 				continue
 			}
-			entry := &CacheEntry{Version: 1, Coordinate: c, RetrievedAt: now, Payload: payload}
+			entry := &CacheEntry{Version: 2, Coordinate: c, RetrievedAt: now, Payload: payload}
 			cache.Write(entry)
 		}
 		return out
