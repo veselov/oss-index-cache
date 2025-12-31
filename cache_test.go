@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"log"
 	"os"
 	"testing"
@@ -20,7 +19,7 @@ func createTestConfig(dir string) *Config {
 }
 
 func TestDiskCacheCRUD(t *testing.T) {
-	dir, err := ioutil.TempDir("", "cache-test-*")
+	dir, err := os.MkdirTemp("", "cache-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +76,7 @@ func TestDiskCacheCRUD(t *testing.T) {
 }
 
 func TestDiskCacheExpiration(t *testing.T) {
-	dir, err := ioutil.TempDir("", "cache-test-exp-*")
+	dir, err := os.MkdirTemp("", "cache-test-exp-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +116,7 @@ func TestDiskCacheExpiration(t *testing.T) {
 }
 
 func TestDiskCacheLocking(t *testing.T) {
-	dir, err := ioutil.TempDir("", "cache-test-lock-*")
+	dir, err := os.MkdirTemp("", "cache-test-lock-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +208,7 @@ func TestDiskCacheLocking(t *testing.T) {
 }
 
 func TestDiskCacheScan(t *testing.T) {
-	dir, err := ioutil.TempDir("", "cache-test-scan-*")
+	dir, err := os.MkdirTemp("", "cache-test-scan-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +277,7 @@ func TestDiskCacheScan(t *testing.T) {
 }
 
 func TestDiskCacheWriteRefreshRace(t *testing.T) {
-	dir, err := ioutil.TempDir("", "cache-test-race-*")
+	dir, err := os.MkdirTemp("", "cache-test-race-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +312,7 @@ func TestDiskCacheWriteRefreshRace(t *testing.T) {
 }
 
 func TestDiskCacheCorruptFile(t *testing.T) {
-	dir, err := ioutil.TempDir("", "cache-test-corrupt-*")
+	dir, err := os.MkdirTemp("", "cache-test-corrupt-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +328,7 @@ func TestDiskCacheCorruptFile(t *testing.T) {
 	coord := "corrupt"
 	path := *cache.keyToPath(coord)
 
-	err = ioutil.WriteFile(path, []byte("invalid json"), 0600)
+	err = os.WriteFile(path, []byte("invalid json"), 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
